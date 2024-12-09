@@ -1,11 +1,7 @@
 const { ApolloServer, gql } = require('apollo-server');
+const { PrismaClient } = require('@prisma/client');
 
-const users = Array.from({ length: 100 }, (_, i) => ({
-  id: `user-${i + 1}`,
-  name: `User ${i + 1}`,
-  age: 20 + (i % 10),
-}));
-
+const prisma = new PrismaClient();
 
 const typeDefs = gql`
   type Query {
@@ -34,25 +30,30 @@ const typeDefs = gql`
   }
 `;
 
-
 const resolvers = {
   Query: {
-    users: (_, { first = 10, after }) => {
-      const startIndex = after ? users.findIndex(user => user.id === after) + 1 : 0;
-      const paginatedUsers = users.slice(startIndex, startIndex + first);
+    users: async (_, { first = 10, after }) => {
+      const where = after ? { id: { gt: after } } : {};
+      const users = await prisma.user.findMany({
+        take: first,
+        skip: after ? 1 : 0, // Skip the cursor item
+        orderBy: { id: 'asc' },
+        where,
+      });
 
-      const edges = paginatedUsers.map(user => ({
+      const edges = users.map(user => ({
         cursor: user.id,
         node: user,
       }));
 
-      const endCursor = edges.length > 0 ? edges[edges.length - 1].cursor : null;
+      const lastUser = users[users.length - 1];
+      const hasNextPage = !!lastUser && (await prisma.user.count({ where: { id: { gt: lastUser.id } } })) > 0;
 
       return {
         edges,
         pageInfo: {
-          endCursor,
-          hasNextPage: startIndex + first < users.length,
+          endCursor: lastUser ? lastUser.id : null,
+          hasNextPage,
         },
       };
     },
@@ -64,4 +65,3 @@ const server = new ApolloServer({ typeDefs, resolvers });
 server.listen().then(({ url }) => {
   console.log(`🚀 Server ready at ${url}`);
 });
-
